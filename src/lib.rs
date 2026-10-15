@@ -4,6 +4,7 @@
 //! Commandes : `status, players, player, items, announce, kick, ban, unban,
 //! bans, give, tp, tpto, tell, heal, feed, hydrate, godmode, top, cheats`.
 
+mod cards;
 mod cheats;
 mod leaderboard;
 mod rsdw;
@@ -88,12 +89,18 @@ impl Caller {
 // ── Helpers JSON ──────────────────────────────────────────────────────────
 
 fn err(message: &str) -> String {
+    // Si le message est déjà un objet JSON d'erreur (client HTTP…), on ne
+    // l'emballe pas une seconde fois.
+    if message.trim_start().starts_with("{") {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(message) {
+            if v.get("error").is_some() {
+                return message.to_string();
+            }
+        }
+    }
     format!("{{\"error\":\"{}\"}}", message.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
-fn ok_passthrough(body: String) -> String {
-    body
-}
 
 fn arg_str(args: &serde_json::Value, key: &str) -> Option<String> {
     args.get(key).and_then(|v| v.as_str()).map(String::from).filter(|s| !s.is_empty())
@@ -155,9 +162,29 @@ fn run_command(cmd: &str, args_json: &str) -> Result<String, String> {
     }
 
     match cmd {
-        "status" => client.get("/api/status"),
+        "status" => {
+            let status: serde_json::Value =
+                serde_json::from_str(&client.get("/api/status")?).unwrap_or(serde_json::json!({}));
+            let health: serde_json::Value =
+                serde_json::from_str(&client.get("/api/health")?).unwrap_or(serde_json::json!({}));
+            let players: serde_json::Value =
+                serde_json::from_str(&client.get("/api/players")?).unwrap_or(serde_json::json!({}));
+            Ok(serde_json::json!({
+                "status": status,
+                "health": health,
+                "count": players.get("count").cloned().unwrap_or(serde_json::json!(0)),
+            })
+            .to_string())
+        }
         "players" => client.get("/api/players"),
-        "items" => client.get("/api/items"),
+        "items" => {
+            let search = arg_str(&args, "search").unwrap_or_default();
+            if search.is_empty() {
+                client.get("/api/items")
+            } else {
+                client.get(&format!("/api/items?search={}", urlencode(&search)))
+            }
+        }
         "bans" => client.get("/api/bans"),
         "player" => {
             let name = arg_str(&args, "player").ok_or("player : argument manquant")?;
@@ -315,8 +342,8 @@ unsafe extern "C" fn plugin_run(
     let cmd = dkbot_host_api::read_cstr(cmd);
     let args_json = dkbot_host_api::read_cstr(args_json);
     let response = match run_command(&cmd, &args_json) {
-        Ok(body) => body,
-        Err(message) => err(&message),
+        Ok(body) => cards::cardify(&cmd, &body),
+        Err(message) => cards::cardify(&cmd, &err(&message)),
     };
     // SAFETY : out est valide pour out_cap octets (contrat hôte).
     unsafe { dkbot_host_api::write_out(out, out_cap, response.as_bytes()) }

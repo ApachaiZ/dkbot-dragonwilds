@@ -15,6 +15,9 @@ pub fn cardify(cmd: &str, raw: &str) -> String {
         return card(&format!("❌ {}", cmd_title(cmd)), error, "bad", &[]);
     }
     match cmd {
+        // Réponse interne d'autocomplétion (tableau de chaînes) : transmise
+        // telle quelle à l'hôte, pas une carte.
+        "__ac" => raw.to_string(),
         "status" => status_card(&parsed),
         "players" => players_card(&parsed),
         "player" => player_card(&parsed),

@@ -22,21 +22,21 @@ static COMMANDS: &str = r#"{
   "commands": [
     {"name":"status","description":"Identité du serveur, monde, état du moteur","args":[]},
     {"name":"players","description":"Joueurs connectés (détail complet)","args":[]},
-    {"name":"player","description":"Fiche d'un joueur","args":[{"name":"player","description":"Nom ou identifiant","kind":"string","required":true}]},
-    {"name":"items","description":"Objets du jeu","args":[{"name":"search","description":"Filtre (facultatif)","kind":"string"}]},
+    {"name":"player","description":"Fiche d'un joueur","args":[{"name":"player","description":"Nom ou identifiant","kind":"player","required":true}]},
+    {"name":"items","description":"Objets du jeu","args":[{"name":"search","description":"Filtre (facultatif)","kind":"item"}]},
     {"name":"announce","description":"Message global","args":[{"name":"message","description":"Texte","kind":"string","required":true}]},
-    {"name":"kick","description":"Expulser un joueur","args":[{"name":"player","description":"Nom ou identifiant","kind":"string","required":true}]},
-    {"name":"ban","description":"Bannir un joueur","args":[{"name":"player","description":"Nom ou identifiant","kind":"string","required":true}]},
-    {"name":"unban","description":"Lever un bannissement","args":[{"name":"player","description":"Nom ou identifiant","kind":"string","required":true}]},
+    {"name":"kick","description":"Expulser un joueur","args":[{"name":"player","description":"Nom ou identifiant","kind":"player","required":true}]},
+    {"name":"ban","description":"Bannir un joueur","args":[{"name":"player","description":"Nom ou identifiant","kind":"player","required":true}]},
+    {"name":"unban","description":"Lever un bannissement","args":[{"name":"player","description":"Nom ou identifiant","kind":"player","required":true}]},
     {"name":"bans","description":"Bannissements persistants","args":[]},
-    {"name":"give","description":"Donner un objet","args":[{"name":"player","description":"Nom ou identifiant","kind":"string","required":true},{"name":"item","description":"Nom de l'objet","kind":"string","required":true},{"name":"count","description":"Quantité (défaut 1)","kind":"int"}]},
-    {"name":"tp","description":"Téléporter un joueur sur un autre","args":[{"name":"from","description":"Joueur source","kind":"string","required":true},{"name":"to","description":"Joueur cible","kind":"string","required":true}]},
-    {"name":"tpto","description":"Téléporter vers des coordonnées","args":[{"name":"player","description":"Nom ou identifiant","kind":"string","required":true},{"name":"x","description":"X","kind":"string","required":true},{"name":"y","description":"Y","kind":"string","required":true},{"name":"z","description":"Z","kind":"string","required":true}]},
-    {"name":"tell","description":"Message privé en jeu","args":[{"name":"player","description":"Nom ou identifiant","kind":"string","required":true},{"name":"message","description":"Texte","kind":"string","required":true}]},
-    {"name":"heal","description":"Soigner un joueur","args":[{"name":"player","description":"Nom ou identifiant","kind":"string","required":true}]},
-    {"name":"feed","description":"Nourrir un joueur","args":[{"name":"player","description":"Nom ou identifiant","kind":"string","required":true}]},
-    {"name":"hydrate","description":"Hydrater un joueur","args":[{"name":"player","description":"Nom ou identifiant","kind":"string","required":true}]},
-    {"name":"godmode","description":"Bascule le god mode","args":[{"name":"player","description":"Nom ou identifiant","kind":"string","required":true},{"name":"enabled","description":"on/off (défaut on)","kind":"bool"}]},
+    {"name":"give","description":"Donner un objet","args":[{"name":"player","description":"Nom ou identifiant","kind":"player","required":true},{"name":"item","description":"Nom de l'objet","kind":"item","required":true},{"name":"count","description":"Quantité (défaut 1)","kind":"int"}]},
+    {"name":"tp","description":"Téléporter un joueur sur un autre","args":[{"name":"from","description":"Joueur source","kind":"player","required":true},{"name":"to","description":"Joueur cible","kind":"player","required":true}]},
+    {"name":"tpto","description":"Téléporter vers des coordonnées","args":[{"name":"player","description":"Nom ou identifiant","kind":"player","required":true},{"name":"x","description":"X","kind":"string","required":true},{"name":"y","description":"Y","kind":"string","required":true},{"name":"z","description":"Z","kind":"string","required":true}]},
+    {"name":"tell","description":"Message privé en jeu","args":[{"name":"player","description":"Nom ou identifiant","kind":"player","required":true},{"name":"message","description":"Texte","kind":"string","required":true}]},
+    {"name":"heal","description":"Soigner un joueur","args":[{"name":"player","description":"Nom ou identifiant","kind":"player","required":true}]},
+    {"name":"feed","description":"Nourrir un joueur","args":[{"name":"player","description":"Nom ou identifiant","kind":"player","required":true}]},
+    {"name":"hydrate","description":"Hydrater un joueur","args":[{"name":"player","description":"Nom ou identifiant","kind":"player","required":true}]},
+    {"name":"godmode","description":"Bascule le god mode","args":[{"name":"player","description":"Nom ou identifiant","kind":"player","required":true},{"name":"enabled","description":"on/off (défaut on)","kind":"bool"}]},
     {"name":"top","description":"Classement XP","args":[{"name":"n","description":"Nombre (défaut 10)","kind":"int"}]},
     {"name":"cheats","description":"Switch cheat (owner)","args":[{"name":"action","description":"get ou set","kind":"string"},{"name":"enabled","description":"on/off","kind":"bool"}]}
   ]
@@ -147,6 +147,18 @@ fn run_command(cmd: &str, args_json: &str) -> Result<String, String> {
     let client = rsdw::Client::new().map_err(|e| e.to_json())?;
     if !client.is_configured() {
         return Err("API non configurée — renseigner RSDW_API_TOKEN".into());
+    }
+
+    // Suggestions d'autocomplétion (appel interne de l'hôte, pas une
+    // commande utilisateur) : pseudos de joueurs ou noms d'objets.
+    if cmd == "__ac" {
+        if !caller.is_mod() {
+            return Err("accès refusé : niveau modérateur requis".into());
+        }
+        let command = arg_str(&args, "command").unwrap_or_default();
+        let option = arg_str(&args, "option").unwrap_or_default();
+        let value = arg_str(&args, "value").unwrap_or_default();
+        return autocomplete(&client, &command, &option, &value);
     }
 
     // Lecture / modération / admin — niveaux miroirs de l'ancien module.
@@ -309,6 +321,100 @@ fn cheat_allowed(cmd: &str, enabled: bool) -> bool {
     !cheats::CHEAT_COMMANDS.contains(&cmd) || enabled
 }
 
+/// Suggestions d'autocomplétion : JSON d'un tableau de chaînes (max 25).
+/// Seuls les pseudos sont proposés (jamais d'identifiants internes).
+fn autocomplete(
+    client: &rsdw::Client,
+    command: &str,
+    option: &str,
+    value: &str,
+) -> Result<String, String> {
+    let kind = manifest_arg_kind(command, option).unwrap_or_default();
+    let needle = value.to_lowercase();
+    match kind.as_str() {
+        "player" => {
+            let players_json = client.get("/api/players")?;
+            let parsed: serde_json::Value = serde_json::from_str(&players_json)
+                .map_err(|e| format!("réponse players illisible : {e}"))?;
+            let names = player_names(&parsed, &needle);
+            Ok(serde_json::json!(names).to_string())
+        }
+        "item" => {
+            let items_json = client.get(&format!("/api/items?search={}", urlencode(value)))?;
+            let parsed: serde_json::Value = serde_json::from_str(&items_json)
+                .map_err(|e| format!("réponse items illisible : {e}"))?;
+            let names = item_names(&parsed, &needle);
+            Ok(serde_json::json!(names).to_string())
+        }
+        _ => Ok("[]".to_string()),
+    }
+}
+
+/// Pseudos des joueurs (characterName sinon name), filtrés, max 25.
+/// Fonction pure pour les tests.
+fn player_names(players: &serde_json::Value, needle: &str) -> Vec<String> {
+    let mut names: Vec<String> = players
+        .get("players")
+        .and_then(|p| p.as_array())
+        .map(|list| {
+            list.iter()
+                .filter_map(|p| {
+                    p.get("characterName")
+                        .and_then(|v| v.as_str())
+                        .or_else(|| p.get("name").and_then(|v| v.as_str()))
+                        .map(String::from)
+                        .filter(|n| !n.is_empty())
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    names.sort();
+    names.dedup();
+    if !needle.is_empty() {
+        names.retain(|n| n.to_lowercase().contains(needle));
+    }
+    names.truncate(25);
+    names
+}
+
+/// Noms d'objets (réponse déjà filtrée par l'API), max 25.
+/// Fonction pure pour les tests.
+fn item_names(items: &serde_json::Value, needle: &str) -> Vec<String> {
+    let mut names: Vec<String> = items
+        .get("items")
+        .and_then(|i| i.as_array())
+        .map(|list| {
+            list.iter()
+                .filter_map(|i| i.get("name").and_then(|v| v.as_str()).map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+    if !needle.is_empty() {
+        names.retain(|n| n.to_lowercase().contains(needle));
+    }
+    names.truncate(25);
+    names
+}
+
+/// Kind sémantique d'un argument du manifeste ("player", "item", …).
+fn manifest_arg_kind(command: &str, option: &str) -> Option<String> {
+    use std::sync::OnceLock;
+    static MANIFEST: OnceLock<serde_json::Value> = OnceLock::new();
+    let manifest = MANIFEST.get_or_init(|| {
+        serde_json::from_str(COMMANDS).expect("manifeste valide")
+    });
+    manifest
+        .get("commands")?
+        .as_array()?
+        .iter()
+        .find(|c| c.get("name").and_then(|n| n.as_str()) == Some(command))?
+        .get("args")?
+        .as_array()?
+        .iter()
+        .find(|a| a.get("name").and_then(|n| n.as_str()) == Some(option))
+        .and_then(|a| a.get("kind").and_then(|k| k.as_str()).map(String::from))
+}
+
 fn urlencode(s: &str) -> String {
     let mut out = String::new();
     for b in s.bytes() {
@@ -403,5 +509,39 @@ mod tests {
         // Sans token dans l'environnement, une commande admin échoue proprement.
         let result = run_command("heal", &owner_args());
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn player_suggestions_use_pseudos_only() {
+        let raw = r#"{"count":2,"players":[
+            {"name":"apachaiz_ps5","characterName":"ApachaiZ","playerId":256,"uniqueNetId":"14059"},
+            {"name":"leblackminou_x","characterName":"LeBlackMinou","playerId":7,"uniqueNetId":"9999"}]}"#;
+        let v: serde_json::Value = serde_json::from_str(raw).unwrap();
+        let names = player_names(&v, "");
+        assert_eq!(names, vec!["ApachaiZ", "LeBlackMinou"]); // pseudos, jamais d'id
+        let filt = player_names(&v, "black");
+        assert_eq!(filt, vec!["LeBlackMinou"]);
+    }
+
+    #[test]
+    fn item_suggestions_are_filtered() {
+        let raw = r#"{"items":[{"name":"DA_Sword_Iron"},{"name":"DA_Shield_Wood"},{"name":"DA_Sword_Steel"}]}"#;
+        let v: serde_json::Value = serde_json::from_str(raw).unwrap();
+        let names = item_names(&v, "sword");
+        assert_eq!(names, vec!["DA_Sword_Iron", "DA_Sword_Steel"]);
+    }
+
+    #[test]
+    fn manifest_kinds_are_lookupable() {
+        assert_eq!(manifest_arg_kind("tp", "from").as_deref(), Some("player"));
+        assert_eq!(manifest_arg_kind("give", "item").as_deref(), Some("item"));
+        assert_eq!(manifest_arg_kind("announce", "message").as_deref(), Some("string"));
+        assert_eq!(manifest_arg_kind("tp", "inconnu"), None);
+    }
+
+    #[test]
+    fn ac_response_is_not_cardified() {
+        let out = cards::cardify("__ac", "[\"ApachaiZ\"]");
+        assert_eq!(out, "[\"ApachaiZ\"]");
     }
 }

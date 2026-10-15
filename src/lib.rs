@@ -140,7 +140,9 @@ fn run_command(cmd: &str, args_json: &str) -> Result<String, String> {
         "status", "players", "player", "items", "announce", "kick", "ban", "unban", "bans",
         "give", "tp", "tpto", "tell", "heal", "feed", "hydrate", "godmode", "top",
     ];
-    if !KNOWN.contains(&cmd) {
+    // __ac est un appel interne de l'hôte (autocomplétion), pas une commande
+    // utilisateur : accepté même s'il n'est pas dans KNOWN.
+    if cmd != "__ac" && !KNOWN.contains(&cmd) {
         return Err(format!("commande inconnue : {cmd}"));
     }
 
@@ -537,6 +539,17 @@ mod tests {
         assert_eq!(manifest_arg_kind("give", "item").as_deref(), Some("item"));
         assert_eq!(manifest_arg_kind("announce", "message").as_deref(), Some("string"));
         assert_eq!(manifest_arg_kind("tp", "inconnu"), None);
+    }
+
+    #[test]
+    fn ac_reaches_the_client_stage() {
+        // __ac doit franchir le check KNOWN (sinon « commande inconnue ») et
+        // atteindre la création du client : sans token, l'erreur est
+        // « API non configurée », pas « commande inconnue ».
+        let args = r#"{"caller":{"id":"1","is_owner":true,"is_mod":true,"roles":[]},"args":{"command":"items","option":"search","value":"iron"}}"#;
+        let result = run_command("__ac", args);
+        let err = result.unwrap_err();
+        assert!(!err.contains("inconnue"), "reçu : {err}");
     }
 
     #[test]

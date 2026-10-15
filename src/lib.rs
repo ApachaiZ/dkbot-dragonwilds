@@ -13,8 +13,35 @@ use std::ffi::c_char;
 use dkbot_host_api::{export_plugin, PluginVtable};
 
 static NAME: &[u8] = b"dragonwilds\0";
-static COMMANDS: &[u8] = b"[\"status\",\"players\",\"player\",\"items\",\"announce\",\"kick\",\"ban\",\"unban\",\"bans\",\"give\",\"tp\",\"tpto\",\"tell\",\"heal\",\"feed\",\"hydrate\",\"godmode\",\"top\",\"cheats\"]\0";
+// Manifeste des commandes — l'hôte l'utilise pour enregistrer les vraies
+// slash commands Discord (/dw status, /dw tp from=… to=…, etc.).
+static COMMANDS: &str = r#"{
+  "group": "dw",
+  "description": "Administration du serveur Dragonwilds",
+  "commands": [
+    {"name":"status","description":"Identité du serveur, monde, état du moteur","args":[]},
+    {"name":"players","description":"Joueurs connectés (détail complet)","args":[]},
+    {"name":"player","description":"Fiche d'un joueur","args":[{"name":"player","description":"Nom ou identifiant","kind":"string","required":true}]},
+    {"name":"items","description":"Objets du jeu","args":[{"name":"search","description":"Filtre (facultatif)","kind":"string"}]},
+    {"name":"announce","description":"Message global","args":[{"name":"message","description":"Texte","kind":"string","required":true}]},
+    {"name":"kick","description":"Expulser un joueur","args":[{"name":"player","description":"Nom ou identifiant","kind":"string","required":true}]},
+    {"name":"ban","description":"Bannir un joueur","args":[{"name":"player","description":"Nom ou identifiant","kind":"string","required":true}]},
+    {"name":"unban","description":"Lever un bannissement","args":[{"name":"player","description":"Nom ou identifiant","kind":"string","required":true}]},
+    {"name":"bans","description":"Bannissements persistants","args":[]},
+    {"name":"give","description":"Donner un objet","args":[{"name":"player","description":"Nom ou identifiant","kind":"string","required":true},{"name":"item","description":"Nom de l'objet","kind":"string","required":true},{"name":"count","description":"Quantité (défaut 1)","kind":"int"}]},
+    {"name":"tp","description":"Téléporter un joueur sur un autre","args":[{"name":"from","description":"Joueur source","kind":"string","required":true},{"name":"to","description":"Joueur cible","kind":"string","required":true}]},
+    {"name":"tpto","description":"Téléporter vers des coordonnées","args":[{"name":"player","description":"Nom ou identifiant","kind":"string","required":true},{"name":"x","description":"X","kind":"string","required":true},{"name":"y","description":"Y","kind":"string","required":true},{"name":"z","description":"Z","kind":"string","required":true}]},
+    {"name":"tell","description":"Message privé en jeu","args":[{"name":"player","description":"Nom ou identifiant","kind":"string","required":true},{"name":"message","description":"Texte","kind":"string","required":true}]},
+    {"name":"heal","description":"Soigner un joueur","args":[{"name":"player","description":"Nom ou identifiant","kind":"string","required":true}]},
+    {"name":"feed","description":"Nourrir un joueur","args":[{"name":"player","description":"Nom ou identifiant","kind":"string","required":true}]},
+    {"name":"hydrate","description":"Hydrater un joueur","args":[{"name":"player","description":"Nom ou identifiant","kind":"string","required":true}]},
+    {"name":"godmode","description":"Bascule le god mode","args":[{"name":"player","description":"Nom ou identifiant","kind":"string","required":true},{"name":"enabled","description":"on/off (défaut on)","kind":"bool"}]},
+    {"name":"top","description":"Classement XP","args":[{"name":"n","description":"Nombre (défaut 10)","kind":"int"}]},
+    {"name":"cheats","description":"Switch cheat (owner)","args":[{"name":"action","description":"get ou set","kind":"string"},{"name":"enabled","description":"on/off","kind":"bool"}]}
+  ]
+}"#;
 
+// plugin_list() devient paresseux (conversion CString une fois)
 // ── Autorisation ──────────────────────────────────────────────────────────
 
 struct Caller {
@@ -273,7 +300,10 @@ unsafe extern "C" fn plugin_name() -> *const c_char {
 }
 
 unsafe extern "C" fn plugin_list() -> *const c_char {
-    COMMANDS.as_ptr() as *const c_char
+    use std::sync::OnceLock;
+    static C: OnceLock<std::ffi::CString> = OnceLock::new();
+    C.get_or_init(|| std::ffi::CString::new(COMMANDS).expect("manifeste valide"))
+        .as_ptr()
 }
 
 unsafe extern "C" fn plugin_run(

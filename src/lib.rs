@@ -38,7 +38,7 @@ static COMMANDS: &str = r#"{
     {"name":"hydrate","description":"Hydrater un joueur","args":[{"name":"player","description":"Nom ou identifiant","kind":"player","required":true}]},
     {"name":"godmode","description":"Bascule le god mode","args":[{"name":"player","description":"Nom ou identifiant","kind":"player","required":true},{"name":"enabled","description":"on/off (défaut on)","kind":"bool"}]},
     {"name":"top","description":"Classement XP","args":[{"name":"n","description":"Nombre (défaut 10)","kind":"int"}]},
-    {"name":"cheats","description":"Switch cheat (owner)","permissions":"admin","args":[{"name":"action","description":"get ou set","kind":"string"},{"name":"enabled","description":"on/off","kind":"bool"}]}
+    {"name":"cheats","description":"Active ou désactive les fonctionnalités cheat (menu on/off)","permissions":"admin","args":[{"name":"state","description":"on ou off","kind":"string","choices":["on","off"]}]}
   ]
 }"#;
 
@@ -113,22 +113,26 @@ fn run_command(cmd: &str, args_json: &str) -> Result<String, String> {
     let mut switch = cheats::CheatSwitch::load();
 
     if cmd == "cheats" {
-        // Propriétaire uniquement : lecture ou bascule du switch.
+        // Propriétaire uniquement : on/off direct (menu), sans argument
+        // affiche l'état courant.
         if !caller.is_owner {
             return Err("cheats : réservé au propriétaire".into());
         }
-        let action = arg_str(&args, "action").unwrap_or_else(|| "get".into());
-        return match action.as_str() {
-            "get" => Ok(format!("{{\"cheats_enabled\":{}}}", switch.enabled())),
-            "set" => {
-                let enabled = args.get("enabled").and_then(|b| b.as_bool()).unwrap_or(true);
-                switch.set(enabled);
+        return match arg_str(&args, "state") {
+            None => Ok(format!("{{\"cheats_enabled\":{}}}", switch.enabled())),
+            Some(state) if state.eq_ignore_ascii_case("on") => {
+                switch.set(true);
                 Ok(format!(
-                    "{{\"ok\":true,\"cheats_enabled\":{enabled},\"message\":\"Fonctionnalités cheat {}\"}}",
-                    if enabled { "activées" } else { "désactivées" }
+                    "{{\"ok\":true,\"cheats_enabled\":true,\"message\":\"Fonctionnalités cheat activées\"}}"
                 ))
             }
-            _ => Err("cheats : action inconnue (get|set)".into()),
+            Some(state) if state.eq_ignore_ascii_case("off") => {
+                switch.set(false);
+                Ok(format!(
+                    "{{\"ok\":true,\"cheats_enabled\":false,\"message\":\"Fonctionnalités cheat désactivées\"}}"
+                ))
+            }
+            Some(other) => Err(format!("cheats : état inconnu {other} (on|off)")),
         };
     }
 
@@ -624,6 +628,28 @@ mod tests {
 
         // Retour à l'état activé + nettoyage.
         sw.set(true);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn cheats_on_off_sets_the_switch() {
+        let _guard = cheats::tests::SWITCH_LOCK.lock().expect("verrou switch");
+        let dir = std::env::temp_dir().join(format!("dkbot-dw-cheats-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::env::set_var("DKBOT_PLUGIN_STATE_DIR", &dir);
+        let call = |state: Option<&str>| -> String {
+            let args = match state {
+                Some(s) => format!(
+                    r#"{{"caller":{{"id":"1","is_owner":true,"roles":[]}},"args":{{"state":"{s}"}}}}"#
+                ),
+                None => r#"{"caller":{"id":"1","is_owner":true,"roles":[]},"args":{}}"#.to_string(),
+            };
+            run_command("cheats", &args).unwrap()
+        };
+        assert!(call(Some("off")).contains("cheats_enabled\":false"));
+        let v: serde_json::Value = serde_json::from_str(&call(None)).unwrap();
+        assert_eq!(v["cheats_enabled"], false); // persisté
+        assert!(call(Some("on")).contains("cheats_enabled\":true"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

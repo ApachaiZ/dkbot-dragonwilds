@@ -332,6 +332,9 @@ fn autocomplete(
     value: &str,
 ) -> Result<String, String> {
     let kind = manifest_arg_kind(command, option).unwrap_or_default();
+    // Le client Discord peut envoyer des espaces de tête/fin (frappe, collage) :
+    // sans trim, «  iron » ne matcherait aucun objet.
+    let value = value.trim();
     let needle = value.to_lowercase();
     match kind.as_str() {
         "player" => {
@@ -355,6 +358,7 @@ fn autocomplete(
 /// Pseudos des joueurs (characterName sinon name), filtrés, max 25.
 /// Fonction pure pour les tests.
 fn player_names(players: &serde_json::Value, needle: &str) -> Vec<String> {
+    let needle = needle.trim(); // espace de tête envoyé par Discord (frappe)
     let mut names: Vec<String> = players
         .get("players")
         .and_then(|p| p.as_array())
@@ -382,6 +386,7 @@ fn player_names(players: &serde_json::Value, needle: &str) -> Vec<String> {
 /// Noms d'objets (réponse déjà filtrée par l'API), max 25.
 /// Fonction pure pour les tests.
 fn item_names(items: &serde_json::Value, needle: &str) -> Vec<String> {
+    let needle = needle.trim(); // espace de tête envoyé par Discord (frappe)
     let mut names: Vec<String> = items
         .get("items")
         .and_then(|i| i.as_array())
@@ -561,6 +566,9 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(raw).unwrap();
         let names = item_names(&v, "sword");
         assert_eq!(names, vec!["DA_Sword_Iron", "DA_Sword_Steel"]);
+        // Discord envoie parfois un espace de tête («  sword ») : ignoré.
+        let spaced = item_names(&v, "  sword\n");
+        assert_eq!(spaced, vec!["DA_Sword_Iron", "DA_Sword_Steel"]);
     }
 
     #[test]

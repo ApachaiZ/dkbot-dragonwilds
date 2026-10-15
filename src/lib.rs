@@ -38,7 +38,7 @@ static COMMANDS: &str = r#"{
     {"name":"hydrate","description":"Hydrater un joueur","args":[{"name":"player","description":"Nom ou identifiant","kind":"player","required":true}]},
     {"name":"godmode","description":"Bascule le god mode","args":[{"name":"player","description":"Nom ou identifiant","kind":"player","required":true},{"name":"enabled","description":"on/off (défaut on)","kind":"bool"}]},
     {"name":"top","description":"Classement XP","args":[{"name":"n","description":"Nombre (défaut 10)","kind":"int"}]},
-    {"name":"cheats","description":"Switch cheat (owner)","args":[{"name":"action","description":"get ou set","kind":"string"},{"name":"enabled","description":"on/off","kind":"bool"}]}
+    {"name":"cheats","description":"Switch cheat (owner)","permissions":"admin","args":[{"name":"action","description":"get ou set","kind":"string"},{"name":"enabled","description":"on/off","kind":"bool"}]}
   ]
 }"#;
 
@@ -434,11 +434,41 @@ unsafe extern "C" fn plugin_name() -> *const c_char {
     NAME.as_ptr() as *const c_char
 }
 
+/// Manifeste DYNAMIQUE : quand le switch cheat est OFF, les commandes
+/// cheat (tp, tpto, give, godmode, heal, feed, hydrate) sont RETIRÉES du
+/// manifeste — l'hôte les masque alors de Discord au prochain sync.
+fn manifest_json() -> String {
+    let mut manifest: serde_json::Value =
+        serde_json::from_str(COMMANDS).expect("manifeste valide");
+    let switch = cheats::CheatSwitch::load();
+    if switch.enabled() {
+        return manifest.to_string();
+    }
+    if let Some(commands) = manifest
+        .get_mut("commands")
+        .and_then(|c| c.as_array_mut())
+    {
+        commands.retain(|c| {
+            let name = c.get("name").and_then(|n| n.as_str()).unwrap_or("");
+            !cheats::CHEAT_COMMANDS.contains(&name)
+        });
+    }
+    manifest.to_string()
+}
+
+static MANIFEST_CACHE: std::sync::Mutex<Option<std::ffi::CString>> = std::sync::Mutex::new(None);
+
 unsafe extern "C" fn plugin_list() -> *const c_char {
-    use std::sync::OnceLock;
-    static C: OnceLock<std::ffi::CString> = OnceLock::new();
-    C.get_or_init(|| std::ffi::CString::new(COMMANDS).expect("manifeste valide"))
-        .as_ptr()
+    let json = manifest_json();
+    let mut cache = MANIFEST_CACHE.lock().expect("cache manifeste");
+    let stale = cache
+        .as_ref()
+        .map(|c| c.to_bytes() != json.as_bytes())
+        .unwrap_or(true);
+    if stale {
+        *cache = Some(std::ffi::CString::new(json).expect("manifeste valide"));
+    }
+    cache.as_ref().expect("manifeste").as_ptr()
 }
 
 unsafe extern "C" fn plugin_run(
@@ -550,6 +580,43 @@ mod tests {
         let result = run_command("__ac", args);
         let err = result.unwrap_err();
         assert!(!err.contains("inconnue"), "reçu : {err}");
+    }
+
+    #[test]
+    fn manifest_hides_cheat_commands_when_switch_off() {
+        let _guard = cheats::tests::SWITCH_LOCK.lock().expect("verrou switch");
+        let dir = std::env::temp_dir().join(format!("dkbot-dw-manifest-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::env::set_var("DKBOT_PLUGIN_STATE_DIR", &dir);
+
+        let names = |json: &str| -> Vec<String> {
+            let v: serde_json::Value = serde_json::from_str(json).unwrap();
+            v["commands"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|c| c["name"].as_str().unwrap().to_string())
+                .collect()
+        };
+
+        // Pas d'état écrit : switch par défaut ACTIVÉ → tout est présent.
+        let on = names(&manifest_json());
+        assert!(on.contains(&"tp".to_string()));
+        assert!(on.contains(&"cheats".to_string()));
+
+        // Switch OFF → les commandes cheat disparaissent, cheats reste.
+        let mut sw = cheats::CheatSwitch::load();
+        sw.set(false);
+        let off = names(&manifest_json());
+        for cheat in cheats::CHEAT_COMMANDS {
+            assert!(!off.contains(&cheat.to_string()), "{cheat} doit être masqué");
+        }
+        assert!(off.contains(&"cheats".to_string())); // re-activable
+        assert!(off.contains(&"status".to_string()));
+
+        // Retour à l'état activé + nettoyage.
+        sw.set(true);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

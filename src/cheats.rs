@@ -47,11 +47,16 @@ fn state_file() -> PathBuf {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
+
+    /// Verrou partagé avec lib.rs : les tests qui touchent au fichier d'état
+    /// du switch (variable d'environnement process-globale) se sérialisent.
+    pub static SWITCH_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     #[test]
     fn defaults_to_enabled() {
+        let _guard = SWITCH_LOCK.lock().expect("verrou switch");
         let sw = CheatSwitch::load();
         assert!(sw.enabled());
     }
